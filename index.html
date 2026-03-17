@@ -5,51 +5,90 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AHT Interval Report</title>
 
-  <!-- DataTables CSS -->
   <link rel="stylesheet" href="https://cdn.datatables.net/2.0.8/css/dataTables.dataTables.min.css">
   <style>
     body { font-family: Arial, sans-serif; padding: 16px; }
+    .note { color: #444; font-size: 14px; }
   </style>
 </head>
 <body>
-  <h1>AHT Interval Report as of 3 PM EST</h1>
-  <p>Source: <code>data.csv</code></p>
+  <h1>CS+ AHT Interval Report as of 4 PM EST</h1>
+  <p class="note">Sources: <code>cbhcc.csv</code> + <code>cpcs.csv</code></p>
+  <div id="status">Loading...</div>
 
   <table id="tbl" class="display" style="width:100%"></table>
 
-  <!-- jQuery (required by DataTables in many setups) -->
   <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-
-  <!-- DataTables JS -->
   <script src="https://cdn.datatables.net/2.0.8/js/dataTables.min.js"></script>
-
-  <!-- Papa Parse (CSV parser) -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
   <script>
-    // Load CSV, build HTML table, then activate DataTables
-    Papa.parse("data.csv", {
-      download: true,
-      header: true,
-      skipEmptyLines: true,
-      complete: function(results) {
-        const data = results.data;
-        const columns = results.meta.fields.map(name => ({ title: name, data: name }));
+    const files = ["cbhcc.csv", "cpcs.csv"];
 
-        // Create DataTable
-        new DataTable("#tbl", {
-          data,
-          columns,
-          pageLength: 25
+    function parseCSV(file) {
+      return new Promise((resolve, reject) => {
+        Papa.parse(file, {
+          download: true,
+          header: true,
+          skipEmptyLines: true,
+          complete: (results) => resolve({ file, results }),
+          error: (err) => reject(err)
         });
-      },
-      error: function(err) {
+      });
+    }
+
+    async function main() {
+      const status = document.getElementById("status");
+
+      try {
+        status.textContent = `Loading ${files.length} files...`;
+
+        const parsed = await Promise.all(files.map(parseCSV));
+
+        // Build a UNION of all column names across both CSVs
+        // (so it still works even if the files have slightly different headers)
+        const allFields = [];
+        const seen = new Set();
+        for (const p of parsed) {
+          for (const f of (p.results.meta.fields || [])) {
+            if (!seen.has(f)) {
+              seen.add(f);
+              allFields.push(f);
+            }
+          }
+        }
+
+        // Merge rows; add source column; fill missing columns with empty strings
+        const mergedRows = [];
+        for (const { file, results } of parsed) {
+          for (const row of results.data) {
+            const obj = { _source_file: file };
+            for (const f of allFields) obj[f] = row[f] ?? "";
+            mergedRows.push(obj);
+          }
+        }
+
+        const columns = [
+          { title: "Source", data: "_source_file" },
+          ...allFields.map(f => ({ title: f, data: f }))
+        ];
+
+        status.textContent = `Loaded ${mergedRows.length} rows from ${files.join(", ")}.`;
+
+        new DataTable("#tbl", {
+          data: mergedRows,
+          columns,
+          pageLength: 25,
+          scrollX: true
+        });
+
+      } catch (err) {
         console.error(err);
-        document.body.insertAdjacentHTML("beforeend",
-          `<p style="color:red;">Failed to load CSV: ${err}</p>`
-        );
+        status.textContent = `Failed to load CSVs: ${err.message || err}`;
       }
-    });
+    }
+
+    main();
   </script>
 </body>
 </html>
