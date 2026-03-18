@@ -3,76 +3,175 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CBHCC CSV Viewer</title>
+  <title>CBHCC AHT Interval Viewer</title>
 
   <link rel="stylesheet" href="https://cdn.datatables.net/2.0.8/css/dataTables.dataTables.min.css">
   <style>
     body { font-family: Arial, sans-serif; padding: 16px; }
     code { background:#f6f6f6; padding: 2px 6px; border-radius: 4px; }
+    h2 { margin-top: 28px; }
+    .muted { color: #555; font-size: 14px; margin-top: 6px; }
 
     /* Light red highlight for the entire row */
     .high-red-row td { background-color: #ffd6d6 !important; }
   </style>
 </head>
 <body>
-  <h1>CBHCC CSV Viewer</h1>
+
+  <!-- TOP TABLE -->
+  <h1>CBHCC AHT (Overall) — <span id="today"></span></h1>
+  <p>Source: <code>cbhccoverallAHT.csv</code></p>
+
+  <div id="statusOverall">Loading...</div>
+  <table id="tblOverall" class="display" style="width:100%"></table>
+
+  <hr style="margin: 28px 0;">
+
+  <!-- SECOND TABLE -->
+  <h2>
+    CBHCC AHT Interval — as of <span id="intervalAsOf">loading…</span> ET
+  </h2>
+  <div class="muted">
+    (Based on the last commit time of <code>cbhcc.csv</code> in this GitHub repository.)
+  </div>
   <p>Source: <code>cbhcc.csv</code></p>
 
-  <div id="status">Loading...</div>
-  <table id="tbl" class="display" style="width:100%"></table>
+  <div id="statusInterval">Loading...</div>
+  <table id="tblInterval" class="display" style="width:100%"></table>
 
   <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
   <script src="https://cdn.datatables.net/2.0.8/js/dataTables.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
   <script>
-    const CSV_FILE = "cbhcc.csv";
+    /************* YOU MUST SET THESE *************/
+    const OWNER = "YOUR_GITHUB_USERNAME";
+    const REPO  = "YOUR_REPO_NAME";
+    const BRANCH = "main";
+    /*********************************************/
+
     const THRESHOLD = 490;
 
-    // Column #5 (1-based) => index 4 (0-based)
-    const COL_INDEX = 4;
+    // Overall table: highlight if 3rd column > 490
+    const OVERALL_CSV = "cbhccoverallAHT.csv";
+    const OVERALL_COL_INDEX = 2; // 3rd column
+
+    // Interval table: highlight if 5th column > 490
+    const INTERVAL_CSV = "cbhcc.csv";
+    const INTERVAL_COL_INDEX = 4; // 5th column
 
     function toNumber(x) {
-      // Handles "1,234", "$123", blanks, etc.
       const n = Number(String(x ?? "").replace(/[^0-9.-]/g, ""));
       return Number.isFinite(n) ? n : null;
     }
 
-    Papa.parse(CSV_FILE + "?v=" + Date.now(), {
-      download: true,
-      header: true,
-      skipEmptyLines: true,
-      complete: function(results) {
-        const data = results.data;
-        const fields = results.meta.fields || [];
+    function renderCSVTable({ csvFile, tableSelector, statusSelector, highlightColIndex }) {
+      const statusEl = document.querySelector(statusSelector);
 
-        const columns = fields.map(name => ({ title: name, data: name }));
+      Papa.parse(csvFile + "?v=" + Date.now(), {
+        download: true,
+        header: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+          const data = results.data;
+          const fields = results.meta.fields || [];
+          const columns = fields.map(name => ({ title: name, data: name }));
 
-        document.getElementById("status").textContent =
-          `Loaded ${data.length} row(s) from ${CSV_FILE}.`;
+          statusEl.textContent = `Loaded ${data.length} row(s) from ${csvFile}.`;
 
-        new DataTable("#tbl", {
-          data,
-          columns,
-          pageLength: 25,
-          scrollX: true,
+          new DataTable(tableSelector, {
+            data,
+            columns,
+            pageLength: 25,
+            scrollX: true,
+            // Search filter is included by default
+            createdRow: function(row, rowData) {
+              const colName = fields[highlightColIndex];
+              const value = toNumber(rowData[colName]);
 
-          createdRow: function(row, rowData) {
-            const colName = fields[COL_INDEX];     // the header name of column #5
-            const value = toNumber(rowData[colName]);
-
-            if (value !== null && value > THRESHOLD) {
-              // Highlight the entire row
-              $(row).addClass("high-red-row");
+              if (value !== null && value > THRESHOLD) {
+                $(row).addClass("high-red-row");
+              }
             }
-          }
+          });
+        },
+        error: function(err) {
+          console.error(err);
+          statusEl.textContent = `Failed to load ${csvFile}: ${err.message || err}`;
+        }
+      });
+    }
+
+    // Show today's date automatically (in US Eastern Time)
+    function setToday() {
+      const today = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        year: "numeric",
+        month: "long",
+        day: "2-digit"
+      }).format(new Date());
+
+      document.getElementById("today").textContent = today;
+    }
+
+    // Get "uploaded time" as last commit time for a file (GitHub API)
+    async function setAsOfFromLastCommit(filename) {
+      const el = document.getElementById("intervalAsOf");
+      try {
+        // Commits API filtered by path, latest first
+        const api = `https://api.github.com/repos/${OWNER}/${REPO}/commits?path=${encodeURIComponent(filename)}&per_page=1&sha=${encodeURIComponent(BRANCH)}`;
+        const res = await fetch(api, {
+          headers: { "Accept": "application/vnd.github+json" }
         });
-      },
-      error: function(err) {
-        console.error(err);
-        document.getElementById("status").textContent =
-          `Failed to load ${CSV_FILE}: ${err.message || err}`;
+        if (!res.ok) throw new Error(`GitHub API HTTP ${res.status}`);
+
+        const commits = await res.json();
+        if (!Array.isArray(commits) || commits.length === 0) {
+          el.textContent = "unknown";
+          return;
+        }
+
+        const iso = commits[0]?.commit?.committer?.date || commits[0]?.commit?.author?.date;
+        if (!iso) {
+          el.textContent = "unknown";
+          return;
+        }
+
+        const dt = new Date(iso);
+
+        // Display in Eastern Time
+        const formatted = new Intl.DateTimeFormat("en-US", {
+          timeZone: "America/New_York",
+          year: "numeric",
+          month: "short",
+          day: "2-digit",
+          hour: "numeric",
+          minute: "2-digit"
+        }).format(dt);
+
+        el.textContent = formatted;
+      } catch (e) {
+        console.error(e);
+        el.textContent = "unable to fetch time";
       }
+    }
+
+    // Run
+    setToday();
+    setAsOfFromLastCommit(INTERVAL_CSV);
+
+    renderCSVTable({
+      csvFile: OVERALL_CSV,
+      tableSelector: "#tblOverall",
+      statusSelector: "#statusOverall",
+      highlightColIndex: OVERALL_COL_INDEX
+    });
+
+    renderCSVTable({
+      csvFile: INTERVAL_CSV,
+      tableSelector: "#tblInterval",
+      statusSelector: "#statusInterval",
+      highlightColIndex: INTERVAL_COL_INDEX
     });
   </script>
 </body>
