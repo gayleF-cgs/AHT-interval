@@ -27,20 +27,6 @@
       color: #ffffff !important;
       font-weight: 800;
     }
-
-    /* ADDED: Supervisor group header row (click to collapse/expand) */
-    tr.group-row td{
-      background: #e9ecef !important;
-      font-weight: 700;
-      cursor: pointer;
-      user-select: none;
-    }
-    tr.group-row td .meta{
-      font-weight: 500;
-      color:#495057;
-      margin-left: .5rem;
-      font-size: 0.9em;
-    }
   </style>
 </head>
 <body>
@@ -81,9 +67,6 @@
               <span class="d-block small">(based on last commit time of <code>cbhcc.csv</code>)</span>
             </div>
             <div class="text-muted mt-1">Source: <code>cbhcc.csv</code></div>
-            <div class="text-muted small mt-1">
-              Tip: Click a Supervisor gray bar to collapse/expand that group.
-            </div>
           </div>
         </div>
 
@@ -127,7 +110,7 @@
 
     // Grand Total detection (Overall table only)
     const GRAND_TOTAL_TEXT = "Grand Total";
-    const GRAND_TOTAL_COL_INDEX = 1; // column 2 => index 1
+    const GRAND_TOTAL_COL_INDEX = 1; // column 2 (1-based) => index 1 (0-based)
 
     // Interval table: highlight if 5th column > 490
     const INTERVAL_CSV = "cbhcc.csv";
@@ -247,8 +230,7 @@
 
           statusEl.className = "alert alert-success py-2 px-3 mt-3 mb-3";
           statusEl.textContent =
-            `Loaded ${data.length} row(s) from ${OVERALL_CSV}.` +
-            (grandTotalRow ? " (Grand Total fixed.)" : " (No Grand Total row found.)");
+            `Loaded ${data.length} row(s) from ${OVERALL_CSV}.` + (grandTotalRow ? " (Grand Total fixed.)" : " (No Grand Total row found.)");
 
           new DataTable("#tblOverall", {
             data,
@@ -270,109 +252,18 @@
       });
     }
 
-    // UPDATED: Interval table grouped by Supervisor with collapse/expand per Supervisor
-    function renderIntervalGroupedBySupervisor() {
-      const statusEl = document.getElementById("statusInterval");
-
-      Papa.parse(INTERVAL_CSV + "?v=" + Date.now(), {
-        download: true,
-        header: true,
-        skipEmptyLines: true,
-        complete: function(results) {
-          const data = results.data;
-          const fields = results.meta.fields || [];
-          const columns = fields.map(name => ({ title: name, data: name }));
-
-          // Supervisor is column 2 => index 1
-          const SUPERVISOR_FIELD = fields[1];
-
-          // Keeps which supervisors are collapsed (persists across paging/filtering redraws)
-          const collapsed = Object.create(null);
-
-          statusEl.className = "alert alert-success py-2 px-3 mt-3 mb-3";
-          statusEl.textContent = `Loaded ${data.length} row(s) from ${INTERVAL_CSV}. Click a Supervisor bar to collapse/expand.`;
-
-          const dt = new DataTable("#tblInterval", {
-            data,
-            columns,
-            pageLength: 25,
-            scrollX: true,
-
-            // Important so each supervisor's rows stay together (needed for grouping UI)
-            order: [[1, "asc"], [2, "asc"]], // Supervisor then Name (3rd column)
-
-            createdRow: function(row, rowData) {
-              // threshold highlighting (AHT column index you set: 5th column -> INTERVAL_COL_INDEX)
-              const colName = fields[INTERVAL_COL_INDEX];
-              const value = toNumber(rowData[colName]);
-              if (value !== null && value > THRESHOLD) $(row).addClass("high-red-row");
-            },
-
-            drawCallback: function() {
-              const api = this.api();
-
-              // remove any prior group header rows before re-adding
-              $("#tblInterval tbody tr.group-row").remove();
-
-              const rows = api.rows({ page: "current" }).nodes();
-              const pageData = api.rows({ page: "current" }).data();
-
-              let lastSupervisor = null;
-
-              for (let i = 0; i < pageData.length; i++) {
-                const supervisor = String(pageData[i][SUPERVISOR_FIELD] ?? "").trim();
-                const key = supervisor || "(blank)";
-                const isCollapsed = !!collapsed[key];
-
-                // Insert group header row when supervisor changes
-                if (key !== lastSupervisor) {
-                  const safeKey = String(key).replace(/"/g, "&quot;");
-
-                  const groupRowHtml = `
-                    <tr class="group-row" data-supervisor="${safeKey}">
-                      <td colspan="${fields.length}">
-                        ${isCollapsed ? "▶" : "▼"} Supervisor: ${key}
-                        <span class="meta">(click to ${isCollapsed ? "expand" : "collapse"})</span>
-                      </td>
-                    </tr>
-                  `;
-
-                  $(rows[i]).before(groupRowHtml);
-                  lastSupervisor = key;
-                }
-
-                // Hide/show the data row based on collapsed state
-                if (collapsed[key]) rows[i].style.display = "none";
-                else rows[i].style.display = "";
-              }
-
-              // Delegate click handler (rebind cleanly on redraw)
-              $("#tblInterval tbody")
-                .off("click", "tr.group-row")
-                .on("click", "tr.group-row", function() {
-                  const sup = $(this).data("supervisor");
-                  collapsed[sup] = !collapsed[sup];
-                  api.draw(false); // redraw current page, keep paging position
-                });
-            }
-          });
-        },
-        error: function(err) {
-          console.error(err);
-          statusEl.className = "alert alert-danger py-2 px-3 mt-3 mb-3";
-          statusEl.textContent = `Failed to load ${INTERVAL_CSV}: ${err.message || err}`;
-        }
-      });
-    }
-
     // Run
     setToday();
     setAsOfFromLastCommit(INTERVAL_CSV);
 
     renderOverallWithFixedGrandTotal();
 
-    // UPDATED: use grouped/collapsible interval table by Supervisor
-    renderIntervalGroupedBySupervisor();
+    renderCSVTable({
+      csvFile: INTERVAL_CSV,
+      tableSelector: "#tblInterval",
+      statusId: "statusInterval",
+      highlightColIndex: INTERVAL_COL_INDEX
+    });
   </script>
 </body>
 </html>
