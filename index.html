@@ -37,7 +37,6 @@
       border-radius: 10px;
       text-decoration: none;
       font: 14px/1.2 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-      /*color: #0f172a;*/
       background: #ffffff;
     }
 
@@ -57,14 +56,13 @@
           <div>
             <h1 class="h4 mb-1">CBHCC AHT (Overall)</h1>
             <div class="text-muted">
-              As of <span id="intervalAsOf">loading…</span> ET
+              As of <span class="intervalAsOf">loading…</span> ET
               <span class="d-block small">(based on last commit time of <code>cbhcc.csv</code>)</span>
             </div>
-            
           </div>
         </div>
 
-        <a class="right-link btn-primary" href="https://cgs-m.github.io/Efficiency-Interval/?lob=beacon-cc" target="_blank" rel="noopener norefferer">
+        <a class="right-link btn-primary" href="https://cgs-m.github.io/Efficiency-Interval/?lob=beacon-cc" target="_blank" rel="noopener noreferrer">
           Efficiency Interval (Beacon CC)
         </a>
         <div style="clear: both;"></div>
@@ -74,7 +72,6 @@
 
         <div class="d-flex flex-wrap align-items-end justify-content-between gap-2">
           <div>
-            <!--<h2 class="h6 mb-1">CBHCC AHT (Tenure)</h2> -->
             <div class="text-muted mt-1">Source: <code>tenure.csv</code></div>
           </div>
         </div>
@@ -89,11 +86,10 @@
 
         <div class="d-flex flex-wrap align-items-end justify-content-between gap-2">
           <div>
-            <!--<h2 class="h6 mb-1">CBHCC AHT (Tenure)</h2> -->
             <div class="text-muted mt-1">Source: <code>cbhccoverallAHT.csv</code></div>
           </div>
         </div>
-        
+
         <!-- OVERALL TABLE -->
         <div id="statusOverall" class="alert alert-secondary py-2 px-3 mt-3 mb-3">
           Loading...
@@ -114,7 +110,7 @@
           <div>
             <h2 class="h5 mb-1">CBHCC AHT Interval</h2>
             <div class="text-muted">
-              As of <span id="intervalAsOf">loading…</span> ET
+              As of <span class="intervalAsOf">loading…</span> ET
               <span class="d-block small">(based on last commit time of <code>cbhcc.csv</code>)</span>
             </div>
             <div class="text-muted mt-1">Source: <code>cbhcc.csv</code></div>
@@ -166,7 +162,7 @@
 
     // Grand Total detection (Overall table only)
     const GRAND_TOTAL_TEXT = "Grand Total";
-    const GRAND_TOTAL_COL_INDEX = 1; // column 2 (1-based) => index 1 (0-based)
+    const GRAND_TOTAL_COL_INDEX = 1; // index 1 (0-based)
 
     // Interval table: highlight if 5th column > 490
     const INTERVAL_CSV = "cbhcc.csv";
@@ -177,63 +173,63 @@
       return Number.isFinite(n) ? n : null;
     }
 
-    function setToday() {
-      const today = new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/New_York",
-        year: "numeric",
-        month: "long",
-        day: "2-digit"
-      }).format(new Date());
-      document.getElementById("today").textContent = today;
+    function setAsOfFromLastCommit(filename) {
+      const els = document.querySelectorAll(".intervalAsOf");
+      const setAll = (txt) => els.forEach(el => el.textContent = txt);
+
+      (async () => {
+        try {
+          const api = `https://api.github.com/repos/${OWNER}/${REPO}/commits?path=${encodeURIComponent(filename)}&per_page=1&sha=${encodeURIComponent(BRANCH)}`;
+          const res = await fetch(api, { headers: { "Accept": "application/vnd.github+json" } });
+
+          if (!res.ok) {
+            const body = await res.text();
+            throw new Error(`GitHub API HTTP ${res.status}: ${body.slice(0, 160)}`);
+          }
+
+          const commits = await res.json();
+          const iso = commits?.[0]?.commit?.committer?.date || commits?.[0]?.commit?.author?.date;
+          if (!iso) throw new Error("No commit date found for this file.");
+
+          const formatted = new Intl.DateTimeFormat("en-US", {
+            timeZone: "America/New_York",
+            year: "numeric",
+            month: "short",
+            day: "2-digit",
+            hour: "numeric",
+            minute: "2-digit"
+          }).format(new Date(iso));
+
+          setAll(formatted);
+        } catch (e) {
+          console.error(e);
+          setAll("unable to fetch time");
+        }
+      })();
     }
 
-    async function setAsOfFromLastCommit(filename) {
-      const el = document.getElementById("intervalAsOf");
-      try {
-        const api = `https://api.github.com/repos/${OWNER}/${REPO}/commits?path=${encodeURIComponent(filename)}&per_page=1&sha=${encodeURIComponent(BRANCH)}`;
-        const res = await fetch(api, { headers: { "Accept": "application/vnd.github+json" } });
-
-        if (!res.ok) {
-          const body = await res.text();
-          throw new Error(`GitHub API HTTP ${res.status}: ${body.slice(0, 160)}`);
-        }
-
-        const commits = await res.json();
-        const iso = commits?.[0]?.commit?.committer?.date || commits?.[0]?.commit?.author?.date;
-        if (!iso) throw new Error("No commit date found for this file.");
-
-        const formatted = new Intl.DateTimeFormat("en-US", {
-          timeZone: "America/New_York",
-          year: "numeric",
-          month: "short",
-          day: "2-digit",
-          hour: "numeric",
-          minute: "2-digit"
-        }).format(new Date(iso));
-
-        el.textContent = formatted;
-      } catch (e) {
-        console.error(e);
-        el.textContent = "unable to fetch time";
+    function destroyIfExists(tableSelector) {
+      // DataTables 2: DataTable.isDataTable still works, but this is safe:
+      if ($.fn.DataTable && $.fn.DataTable.isDataTable(tableSelector)) {
+        $(tableSelector).DataTable().destroy();
+        $(tableSelector).empty(); // clear headers/rows so a clean re-init works
       }
     }
 
     function renderCSVTable({ csvFile, tableSelector, statusId, highlightColIndex }) {
       const statusEl = document.getElementById(statusId);
+      destroyIfExists(tableSelector);
 
       Papa.parse(csvFile + "?v=" + Date.now(), {
         download: true,
         header: true,
         skipEmptyLines: true,
         complete: function(results) {
-          // Filter out rows where ALL fields are blank / "nan" (your tenure.csv has a trailing nan row)
           const fields = results.meta.fields || [];
           const cleaned = (results.data || []).filter(r => {
             const vals = fields.map(f => String(r?.[f] ?? "").trim().toLowerCase());
             if (vals.length === 0) return false;
-            // remove completely empty rows
             if (vals.every(v => v === "")) return false;
-            // remove all-nan rows
             if (vals.every(v => v === "nan")) return false;
             return true;
           });
@@ -264,35 +260,33 @@
       });
     }
 
-    // Special renderer: keep Grand Total as fixed footer (Overall table)
     function renderOverallWithFixedGrandTotal() {
       const statusEl = document.getElementById("statusOverall");
       const tableEl = document.querySelector("#tblOverall");
       const tfootEl = tableEl.querySelector("tfoot");
+
+      destroyIfExists("#tblOverall");
+      tfootEl.innerHTML = "";
 
       Papa.parse(OVERALL_CSV + "?v=" + Date.now(), {
         download: true,
         header: true,
         skipEmptyLines: true,
         complete: function(results) {
-          const allRows = results.data;
+          const allRows = results.data || [];
           const fields = results.meta.fields || [];
           const columns = fields.map(name => ({ title: name, data: name }));
 
           const gtFieldName = fields[GRAND_TOTAL_COL_INDEX];
-
           const isGrandTotal = (r) =>
             String(r?.[gtFieldName] ?? "").trim().toLowerCase() === GRAND_TOTAL_TEXT.toLowerCase();
 
           const grandTotalRow = allRows.find(isGrandTotal);
           const data = allRows.filter(r => !isGrandTotal(r));
 
-          // Build the footer row HTML (always visible)
           if (grandTotalRow) {
             const tds = fields.map(f => `<td>${(grandTotalRow[f] ?? "").toString()}</td>`).join("");
             tfootEl.innerHTML = `<tr class="grand-total-row">${tds}</tr>`;
-          } else {
-            tfootEl.innerHTML = "";
           }
 
           statusEl.className = "alert alert-success py-2 px-3 mt-3 mb-3";
@@ -321,10 +315,8 @@
     }
 
     // Run
-    setToday();
     setAsOfFromLastCommit(INTERVAL_CSV);
 
-    // Tenure table (on top of Overall)
     renderCSVTable({
       csvFile: TENURE_CSV,
       tableSelector: "#tblTenure",
@@ -332,10 +324,8 @@
       highlightColIndex: TENURE_HIGHLIGHT_COL_INDEX
     });
 
-    // Overall table (with Grand Total pinned)
     renderOverallWithFixedGrandTotal();
 
-    // Interval table
     renderCSVTable({
       csvFile: INTERVAL_CSV,
       tableSelector: "#tblInterval",
